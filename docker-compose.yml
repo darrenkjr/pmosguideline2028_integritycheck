@@ -1,0 +1,77 @@
+services:
+
+  db:
+    image: pgautoupgrade/pgautoupgrade:17-alpine
+    container_name: label-studio-db
+    restart: always
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-labelstudio}
+      POSTGRES_USER: ${POSTGRES_USER:-labelstudio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-labelstudio} -d ${POSTGRES_DB:-labelstudio}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  label-studio:
+    image: heartexlabs/label-studio:latest
+    container_name: label-studio
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    ports:
+      - "${LS_BIND_ADDR:-127.0.0.1}:8080:8080"
+    environment:
+      # --- database ---
+      - DJANGO_DB=default
+      - POSTGRE_NAME=${POSTGRES_DB:-labelstudio}
+      - POSTGRE_USER=${POSTGRES_USER:-labelstudio}
+      - POSTGRE_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - POSTGRE_HOST=db
+      - POSTGRE_PORT=5432
+
+      # --- public address / reverse proxy ---
+      - LABEL_STUDIO_HOST=${LS_HOST:-http://localhost:8080}
+      - CSRF_TRUSTED_ORIGINS=${LS_CSRF:-}
+      - SECURE_PROXY_SSL_HEADER=${LS_PROXY_HEADER:-}
+      - USE_X_FORWARDED_HOST=${LS_FORWARDED_HOST:-false}
+
+      # --- local PDF serving ---
+      - LABEL_STUDIO_LOCAL_FILES_SERVING_ENABLED=true
+      - LABEL_STUDIO_LOCAL_FILES_DOCUMENT_ROOT=/label-studio/files
+
+      # --- registration ---
+      - LABEL_STUDIO_DISABLE_SIGNUP_WITHOUT_LINK=${DISABLE_SIGNUP:-false}
+      # --- other stuff ---
+      - COLLECT_ANALYTICS=false
+    volumes:
+      - label_studio_data:/label-studio/data
+      - ./data:/label-studio/files:ro
+      # - ./scripts:/label-studio/scripts:ro
+
+  caddy:
+    image: caddy:alpine
+    container_name: label-studio-caddy
+    restart: always
+    profiles: [ "prod" ]
+    depends_on:
+      - label-studio
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pg_data:
+  label_studio_data:
+  caddy_data:
+  caddy_config:
